@@ -21,7 +21,7 @@ class AuthController extends Controller
         // إنشاء الحساب وتشفير كلمة المرور في حقل password_hash المعتمد في الـ ERD
         $user = User::create([
             'email' => $request->email,
-            'password_hash' => Hash::make($request->password), // تشفير عالمي آمن بالـ Bcrypt
+            'password' => Hash::make($request->password), // تشفير عالمي آمن بالـ Bcrypt
             'role' => $request->role,
             'first_name' => $request->first_name,
             'last_name' => $request->last_name,
@@ -52,7 +52,7 @@ class AuthController extends Controller
         // البحث عن المستخدم والتحقق من كلمة المرور المشفرة بحقل password_hash بدقة كاملة
         $user = User::where('email', $request->email)->first();
 
-        if (!$user || !Hash::check($request->password, $user->password_hash)) {
+        if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Authentication failed: Invalid email or password credentials.'
@@ -80,4 +80,70 @@ class AuthController extends Controller
             ]
         ], 200);
     }
+
+
+        /**
+     * نظام تسجيل الخروج الآمن وتدمير التوكن (Logout API)
+     */
+    public function logout(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        // تدمير التوكن الحالي الذي استخدمه المستخدم لدخول هذه الجلسة فوراً
+        $request->user()->currentAccessToken()->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Logged out successfully. Token revoked and session secured.'
+        ], 200); // كود 200 القياسي للعمليات الناجحة
+    }
+
+
+        /**
+     * إرسال رابط/كود استعادة كلمة المرور (Forgot Password)
+     */
+    public function forgotPassword(\App\Http\Requests\Api\ForgotPasswordRequest $request): \Illuminate\Http\JsonResponse
+    {
+        $token = \Illuminate\Support\Str::random(60);
+
+        // تخزين التوكن المؤقت في الجدول الافتراضي الذي رأيناه في الملف الأول
+        \Illuminate\Support\Facades\DB::table('password_reset_tokens')->updateOrInsert(
+            ['email' => $request->email],
+            ['token' => \Illuminate\Support\Facades\Hash::make($token), 'created_at' => now()]
+        );
+
+        // 💡 المقاييس العالمية: هنا يتم إرسال الإيميل الفعلي للمستخدم يحتوي على التوكن
+        // Mail::to($request->email)->send(new ResetPasswordMail($token));
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Password reset token generated and simulated. (In production, an email will be dispatched).',
+            'debug_token' => $token // نرسله حالياً لتجربته في فحص الـ API
+        ], 200);
+    }
+
+    /**
+     * تعيين كلمة المرور الجديدة (Reset Password)
+     */
+    public function resetPassword(\App\Http\Requests\Api\ResetPasswordRequest $request): \Illuminate\Http\JsonResponse
+    {
+        $record = \Illuminate\Support\Facades\DB::table('password_reset_tokens')->where('email', $request->email)->first();
+
+        if (!$record || !\Illuminate\Support\Facades\Hash::check($request->token, $record->token)) {
+            return response()->json(['status' => 'error', 'message' => 'Invalid email or token expired.'], 422);
+        }
+
+        // تحديث كلمة المرور المشفرة داخل حقل password_hash الخاص بمخططكِ كلياً!
+        $user = \App\Models\User::where('email', $request->email)->first();
+        $user->update([
+            'password_hash' => \Illuminate\Support\Facades\Hash::make($request->password)
+        ]);
+
+        // مسح التوكن المؤقت بعد الاستخدام الناجح لحماية الحساب
+        \Illuminate\Support\Facades\DB::table('password_reset_tokens')->where('email', $request->email)->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Your password has been successfully updated. You can now login with your new credentials.'
+        ], 200);
+    }
+
 }
